@@ -26,6 +26,7 @@ dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
+    "honcho>=2.0.0",
 ]
 
 [tool.pytest.ini_options]

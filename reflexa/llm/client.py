@@ -38,10 +38,11 @@ class LLMClient:
         timeout: int = 30,
         max_retries: int = 3,
         base_url: str | None = None,
+        mode: instructor.Mode = instructor.Mode.TOOLS,
     ) -> None:
         # max_retries=0 on the OpenAI client — instructor handles validation retries
         raw = AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=0)
-        self._client = instructor.from_openai(raw)
+        self._client = instructor.from_openai(raw, mode=mode)
         self.model_id = model
         self.timeout = timeout
         self.max_retries = max_retries
@@ -125,4 +126,5 @@ def build_judge_client(settings, model_id: str) -> LLMClient | object:
         model=model_id,
         timeout=settings.llm_timeout,
         base_url=OPENROUTER_BASE_URL,
+        mode=instructor.Mode.JSON,
     )

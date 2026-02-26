@@ -72,7 +72,7 @@ class LLMClient:
                         response_model=response_model,
                         max_retries=self.max_retries,
                         temperature=temperature,
-                        max_tokens=max_tokens,
+                        max_completion_tokens=max_tokens,
                     )
                 )
             if completion.usage:

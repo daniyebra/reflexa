@@ -87,7 +87,6 @@ async def create_turn(
         created_at=created_at,
     )
     db.add(obj)
-    await db.flush()
     return obj
 
 

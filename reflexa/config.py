@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # LLM — judges (OpenRouter)
     openrouter_api_key: str = ""
-    judge_models: str = "x-ai/grok-4-fast,google/gemma-3-4b-it:free,anthropic/claude-3.5-haiku"
+    judge_models: str = "x-ai/grok-4-fast,mistralai/mistral-small-3.1-24b-instruct:free,anthropic/claude-3.5-haiku"
 
     @property
     def judge_models_list(self) -> list[str]:

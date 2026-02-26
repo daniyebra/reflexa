@@ -152,14 +152,14 @@ Full interactive docs: `http://localhost:8000/docs`
 
 ## Architecture
 
-Every user message triggers **both** pipelines simultaneously:
+Every user message runs through two conditions:
 
-- **Baseline** — single LLM call → `FeedbackOutput`
-- **Corrected** — 4-stage pipeline: Draft → (Verifier ‖ Critic) → Reviser → `FeedbackOutput`
+1. **Baseline** — single LLM call → `FeedbackOutput` (returned to user immediately)
+2. **Corrected** — Baseline output passed as draft → Verifier ‖ Critic → Reviser → `FeedbackOutput` (runs in background)
 
-One condition is shown to the user; the other runs silently in the background. Both outputs are stored for offline comparison.
+The Corrected pipeline does not generate an independent draft. It takes the Baseline output and applies a three-stage correction process to it — Verifier and Critic run in parallel, then Reviser integrates their reports to produce the final output. This means the evaluation directly measures whether the correction pipeline improves the Baseline feedback.
 
-The active display condition is set by `DISPLAY_CONDITION` in `.env`.
+One condition is shown to the user; the other stores silently. Both outputs are stored for offline comparison. The active display condition is set by `DISPLAY_CONDITION` in `.env` (default: `baseline`).
 
 See `prd.md` for the full product requirements document.
 

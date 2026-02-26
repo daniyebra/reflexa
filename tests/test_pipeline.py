@@ -106,9 +106,15 @@ async def test_run_baseline_writes_feedback_output(db_session):
 # Corrected pipeline
 # ---------------------------------------------------------------------------
 
+async def _run_corrected_with_baseline(db_session, ctx):
+    """Helper: run baseline first, then pass its output to run_corrected."""
+    baseline_result = await run_baseline(ctx)
+    return await run_corrected(ctx, baseline_feedback=baseline_result.feedback)
+
+
 async def test_run_corrected_returns_pipeline_result(db_session):
     sid, tid = await _setup_session_and_turn(db_session)
-    result = await run_corrected(_make_ctx(db_session, sid, tid))
+    result = await _run_corrected_with_baseline(db_session, _make_ctx(db_session, sid, tid))
 
     assert isinstance(result.feedback, FeedbackOutput)
     assert result.condition == "corrected"
@@ -116,7 +122,7 @@ async def test_run_corrected_returns_pipeline_result(db_session):
 
 async def test_run_corrected_creates_four_artifacts(db_session):
     sid, tid = await _setup_session_and_turn(db_session)
-    result = await run_corrected(_make_ctx(db_session, sid, tid))
+    result = await _run_corrected_with_baseline(db_session, _make_ctx(db_session, sid, tid))
 
     artifacts = (
         await db_session.execute(
@@ -135,7 +141,7 @@ async def test_run_corrected_creates_four_artifacts(db_session):
 
 async def test_run_corrected_pipeline_run_completed(db_session):
     sid, tid = await _setup_session_and_turn(db_session)
-    result = await run_corrected(_make_ctx(db_session, sid, tid))
+    result = await _run_corrected_with_baseline(db_session, _make_ctx(db_session, sid, tid))
 
     run = await crud.get_pipeline_run(db_session, result.pipeline_run_id)
     assert run.status == "completed"
@@ -144,7 +150,7 @@ async def test_run_corrected_pipeline_run_completed(db_session):
 
 async def test_run_corrected_writes_feedback_output(db_session):
     sid, tid = await _setup_session_and_turn(db_session)
-    await run_corrected(_make_ctx(db_session, sid, tid))
+    await _run_corrected_with_baseline(db_session, _make_ctx(db_session, sid, tid))
 
     fo = await crud.get_feedback_output(db_session, tid, "corrected")
     assert fo is not None
@@ -188,8 +194,8 @@ async def test_get_turn_artifacts_returns_five_total(db_session):
     ctx = _make_ctx(db_session, sid, tid)
 
     # Run both conditions explicitly (no background task — same session)
-    await run_baseline(ctx)
-    await run_corrected(ctx)
+    baseline_result = await run_baseline(ctx)
+    await run_corrected(ctx, baseline_feedback=baseline_result.feedback)
 
     artifacts = await crud.get_turn_artifacts(db_session, tid)
     assert len(artifacts) == 5

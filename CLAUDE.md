@@ -25,21 +25,22 @@ The system runs with `OPENAI_API_KEY=mock` for local development (no real API ca
 
 ## Architecture
 
-Reflexa is a **research platform** that runs two LLM feedback pipelines in parallel for every user message, stores all outputs, and evaluates them offline with an LLM judge.
+Reflexa is a **research platform** that runs two LLM feedback pipelines for every user message, stores all outputs, and evaluates them offline with an LLM judge.
 
 ### Two-condition design (core concept)
-Every user turn triggers **both** pipelines simultaneously:
-- **Baseline** — single LLM call → `FeedbackOutput`
-- **Corrected** — 4-stage pipeline: Draft → (Verifier ‖ Critic) → Reviser → `FeedbackOutput`
+Every user turn runs both conditions sequentially:
+- **Baseline** — single LLM call → `FeedbackOutput` (always runs first; shown to user)
+- **Corrected** — takes the Baseline output as its draft → (Verifier ‖ Critic) → Reviser → `FeedbackOutput` (runs in background)
 
-One condition is shown to the user; the other runs in the background via `asyncio.create_task()`. Both outputs are stored for offline comparison. The active display condition is set by `DISPLAY_CONDITION` in config.
+The Corrected pipeline never generates an independent draft. It refines the Baseline output through three stages: Verifier and Critic review it in parallel, then Reviser integrates their reports. This ensures the evaluation measures the direct improvement attributable to the correction pipeline. Both outputs are stored for offline comparison. The active display condition is set by `DISPLAY_CONDITION` in config.
 
 ### Data flow
 ```
 HTTP POST /sessions/{id}/turns
   └─ orchestrator.run_both_conditions()
-       ├─ await display_coro           → returned in HTTP response
-       └─ asyncio.create_task(alt)    → completes after response sent
+       ├─ await run_baseline()              → returned in HTTP response
+       └─ asyncio.create_task(             → completes after response sent
+            run_corrected(baseline_output))
             ↓ (both write to SQLite)
   pipeline_runs → pipeline_artifacts → feedback_outputs
                                             ↓
@@ -62,11 +63,11 @@ HTTP POST /sessions/{id}/turns
 | `reflexa/llm/cost.py` | `estimate_cost(model_id, tokens_in, tokens_out) -> float \| None` — USD cost table (per 1M tokens) |
 | `reflexa/llm/client.py` | `LLMClient` wraps `instructor` + `AsyncOpenAI`; writes `llm_calls` row on every call (success or failure). `build_llm_client(settings)` factory selects real vs mock. |
 | `reflexa/llm/mock.py` | `MockLLMClient` — returns deterministic responses; register new types via `_register(ModelClass, data_dict)`. Activated when `OPENAI_API_KEY=mock`. |
-| `reflexa/prompts/` | Versioned YAML prompt files — **immutable once committed**; new version = new `v{N+1}.yaml`. Current latest: `baseline/v2`, `pipeline_reviser/v2`, `session_opener/v1`, others `v1`. |
+| `reflexa/prompts/` | Versioned YAML prompt files — **immutable once committed**; new version = new `v{N+1}.yaml`. Current latest: `baseline/v3`, `pipeline_reviser/v3`, `session_opener/v1`, others `v1`. `pipeline_draft/v1` exists but is no longer called at runtime. |
 | `reflexa/prompt_loader.py` | `PromptLoader` class + module singleton `loader`. `get_prompt(name)` respects env-var overrides then falls back to `latest()`. `PromptTemplate.to_messages(**kwargs)` renders both parts into an OpenAI messages list. |
 | `reflexa/pipeline/baseline.py` | `run_baseline()` — single-call feedback pipeline |
-| `reflexa/pipeline/corrected.py` | `run_corrected()` — 4-stage pipeline: Draft → (Verifier ‖ Critic) → Reviser |
-| `reflexa/pipeline/orchestrator.py` | `run_both_conditions()` — runs display condition, fires alternate as background task |
+| `reflexa/pipeline/corrected.py` | `run_corrected(ctx, baseline_feedback)` — 3 active stages: (Verifier ‖ Critic) → Reviser, using baseline output as draft (no independent draft LLM call) |
+| `reflexa/pipeline/orchestrator.py` | `run_both_conditions()` — always awaits baseline first, then fires corrected as background task passing baseline output as draft |
 | `reflexa/pipeline/opener.py` | `run_session_opener()` — generates opening message in target language at session start |
 | `reflexa/api/` | FastAPI app + routers for sessions, chat, artifacts, eval |
 | `reflexa/eval/` | Offline harness: blinded judge scoring → `eval_scores`; export to CSV/JSONL |
@@ -95,9 +96,9 @@ Prompt YAMLs live at `reflexa/prompts/{name}/v{N}.yaml`. **Never edit a file aft
 
 ### Conversational flow (implemented after Phase 4)
 - `Session.opener_message` — LLM generates an opening message at session creation time; stored in DB and returned in `POST /sessions` response
-- `FeedbackOutput.conversation_reply` — every pipeline turn returns a 1-2 sentence follow-up in the target language; stored in `feedback_outputs` and surfaced in the API
+- `FeedbackOutput.conversation_reply` — every pipeline turn returns a conversational follow-up in the target language; stored in `feedback_outputs` and surfaced in the API
 - UI: opener shown as first assistant bubble; per-turn layout is reply-first with structured feedback collapsed in an expander
-- Prompts `baseline/v2` and `pipeline_reviser/v2` add the `conversation_reply` field to the JSON schema; `session_opener/v1` is new
+- Prompts `baseline/v3` and `pipeline_reviser/v3` are the current latest versions (richer conversation_reply, temperature 0.5, max_tokens 1500); `session_opener/v1` is new
 - Curly braces in YAML schema examples must be double-escaped (`{{` / `}}`) because `PromptTemplate.to_messages()` uses `str.format_map()`
 
 ### Implementation phases

@@ -34,7 +34,18 @@ def _feedback_to_text(fb: FeedbackOutput) -> str:
     )
 
 
-async def run_corrected(ctx: PipelineContext) -> PipelineResult:
+async def run_corrected(
+    ctx: PipelineContext,
+    baseline_feedback: FeedbackOutput,
+) -> PipelineResult:
+    """
+    Corrected pipeline: takes the baseline feedback as its draft and runs
+    verifier → critic → reviser to produce an improved feedback object.
+
+    Stage 0 (draft): baseline_feedback passed through — no LLM call.
+    Stage 1+2 (verifier ‖ critic): review the baseline feedback in parallel.
+    Stage 3 (reviser): integrate reports to produce the final corrected output.
+    """
     run_id = str(uuid.uuid4())
     start = time.monotonic()
 
@@ -49,41 +60,24 @@ async def run_corrected(ctx: PipelineContext) -> PipelineResult:
 
     try:
         history_text = ConversationMemory.format_for_prompt(ctx.conversation_history)
+        draft_text = _feedback_to_text(baseline_feedback)
 
-        # ── Stage 1: Draft ────────────────────────────────────────────────
-        draft_tmpl = get_prompt("pipeline_draft")
-        draft_messages = draft_tmpl.to_messages(
-            target_language=ctx.target_language,
-            proficiency_level=ctx.proficiency_level or "unspecified",
-            user_message=ctx.user_message,
-            conversation_history=history_text,
-        )
-        draft: FeedbackOutput = await ctx.llm_client.complete(
-            messages=draft_messages,
-            response_model=FeedbackOutput,
-            prompt_version_id=draft_tmpl.version_id,
-            caller_context="pipeline/corrected/draft",
-            db=ctx.db,
-            temperature=draft_tmpl.model_constraints.get("temperature", 0.4),
-            max_tokens=draft_tmpl.model_constraints.get("max_tokens", 1024),
-        )
+        # ── Stage 0: Draft (baseline passthrough — no LLM call) ──────────────
         await crud.create_pipeline_artifact(
             ctx.db,
             id=str(uuid.uuid4()),
             pipeline_run_id=run_id,
             stage="draft",
             stage_index=0,
-            prompt_version_id=draft_tmpl.version_id,
-            raw_input=json.dumps(draft_messages),
-            raw_output=draft.model_dump_json(),
-            parsed_output=draft.model_dump_json(),
+            prompt_version_id="baseline_passthrough/v1",
+            raw_input="",
+            raw_output=baseline_feedback.model_dump_json(),
+            parsed_output=baseline_feedback.model_dump_json(),
             llm_call_id=None,
             created_at=_now(),
         )
 
-        draft_text = _feedback_to_text(draft)
-
-        # ── Stage 2+3: Verifier ‖ Critic (parallel) ───────────────────────
+        # ── Stage 1+2: Verifier ‖ Critic (parallel) ──────────────────────────
         verifier_tmpl = get_prompt("pipeline_verifier")
         critic_tmpl = get_prompt("pipeline_critic")
 
@@ -148,7 +142,7 @@ async def run_corrected(ctx: PipelineContext) -> PipelineResult:
             created_at=_now(),
         )
 
-        # ── Stage 4: Reviser ───────────────────────────────────────────────
+        # ── Stage 3: Reviser ──────────────────────────────────────────────────
         reviser_tmpl = get_prompt("pipeline_reviser")
         reviser_msgs = reviser_tmpl.to_messages(
             target_language=ctx.target_language,

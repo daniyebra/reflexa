@@ -241,7 +241,10 @@ async def get_unscored_feedback_outputs(db: AsyncSession) -> list:
 
     scored_ids = select(EvalItem.feedback_output_id)
     result = await db.execute(
-        select(FeedbackOutputDB).where(FeedbackOutputDB.id.not_in(scored_ids))
+        select(FeedbackOutputDB).where(
+            FeedbackOutputDB.id.not_in(scored_ids),
+            FeedbackOutputDB.error_list != "[]",
+        )
     )
     return result.scalars().all()
 

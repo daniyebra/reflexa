@@ -26,11 +26,11 @@
 ## 1. Problem Statement & Goals
 
 ### Problem
-Language learners receive feedback of inconsistent quality from LLM-based tutors. A single-pass generation approach (Baseline) may miss errors, hallucinate corrections, or produce pedagogically unhelpful explanations. A multi-stage self-correction pipeline (Corrected) — where a draft is reviewed by a linguistic verifier and a pedagogical critic before being revised — may produce higher-quality feedback, but this hypothesis has not been empirically validated.
+Language learners receive feedback of inconsistent quality from LLM-based tutors. A single-pass generation approach (Baseline) may miss errors, hallucinate corrections, or produce pedagogically unhelpful explanations. A multi-stage self-correction pipeline (Corrected) — where the baseline output is reviewed by a linguistic verifier and a pedagogical critic, then revised — may produce higher-quality feedback, but this hypothesis has not been empirically validated.
 
 ### Goals
 - **G1**: Build a research platform that captures structured corrective feedback for learner messages in a target language.
-- **G2**: Run two generation conditions in parallel (Baseline and Corrected) for every user turn, store all outputs and intermediate artifacts, and expose them for offline evaluation.
+- **G2**: Run two generation conditions for every user turn — Baseline first, then Corrected as a refinement of the Baseline output — store all outputs and intermediate artifacts, and expose them for offline evaluation.
 - **G3**: Implement an offline LLM-judge evaluation harness that scores each output on five axes with full blinding and reproducibility.
 - **G4**: Produce a system that is end-to-end functional within two weeks, with a mock LLM fallback for API-key-free development.
 - **G5**: Keep the system simple, local, and self-contained (SQLite, no cloud infra required).
@@ -80,12 +80,15 @@ Language learners receive feedback of inconsistent quality from LLM-based tutors
 │  ┌─────────────────────────────────────────────────┐   │
 │  │           Pipeline Orchestrator                 │   │
 │  │                                                 │   │
-│  │  ┌──────────────┐   ┌────────────────────────┐ │   │
-│  │  │  Baseline    │   │  Corrected (4-stage)   │ │   │
-│  │  │  (1 LLM call)│   │  Draft → Verify+Critic │ │   │
-│  │  │              │   │       → Revise          │ │   │
-│  │  └──────────────┘   └────────────────────────┘ │   │
-│  │         ↓ (display)          ↓ (background)    │   │
+│  │  ┌──────────────┐                              │   │
+│  │  │  Baseline    │  → FeedbackOutput (display)  │   │
+│  │  │  (1 LLM call)│        │                     │   │
+│  │  └──────────────┘        │ (passed as draft)   │   │
+│  │                          ▼                     │   │
+│  │  ┌────────────────────────────────────────┐   │   │
+│  │  │  Corrected (3-stage, background)       │   │   │
+│  │  │  Verify + Critic → Revise              │   │   │
+│  │  └────────────────────────────────────────┘   │   │
 │  └─────────────────────────────────────────────────┘   │
 │                                                         │
 │  ┌──────────────────────────────────────────────────┐  │
@@ -380,7 +383,7 @@ Response `201`:
 }
 ```
 
-Implementation: awaits the display-condition coroutine; wraps the alternate condition in `asyncio.create_task()` (fire-and-forget background task).
+Implementation: always awaits baseline first; if `display_condition="baseline"`, returns immediately and fires the corrected pipeline as a background task using the baseline output as draft. If `display_condition="corrected"`, awaits corrected sequentially after baseline.
 
 ### 6.3 Artifacts
 
@@ -466,12 +469,13 @@ user_template: |
 
 | Stage | File | Output Schema |
 |-------|------|---------------|
-| Baseline | `baseline/v1.yaml` | `FeedbackOutput` |
-| Draft | `pipeline_draft/v1.yaml` | `FeedbackOutput` |
+| Baseline | `baseline/v{N}.yaml` | `FeedbackOutput` |
 | Verifier | `pipeline_verifier/v1.yaml` | `{"issues": [...], "missed_errors": [...], "verdict": "pass"\|"revise"}` |
 | Critic | `pipeline_critic/v1.yaml` | `{"critique": [...], "suggestions": [...], "verdict": "pass"\|"revise"}` |
-| Reviser | `pipeline_reviser/v1.yaml` | `FeedbackOutput` |
+| Reviser | `pipeline_reviser/v{N}.yaml` | `FeedbackOutput` |
 | Eval Judge | `eval_judge/v1.yaml` | `{"score": 1-5, "rationale": str}` |
+
+Note: `pipeline_draft/v1.yaml` exists in the repository for historical reference but is no longer called at runtime. The baseline output serves as the draft input to the corrected pipeline.
 
 ---
 
@@ -522,35 +526,47 @@ Steps:
 5. Write `feedback_outputs` row.
 6. Update `pipeline_runs` to `status="completed"`.
 
-### 8.4 Condition B — Corrected Pipeline (4 Stages)
+### 8.4 Condition B — Corrected Pipeline (3 Active Stages + Baseline Passthrough)
 
 ```
-                            ┌──── verifier/v1 ────┐
-user_message + history      │                      ├── reviser/v1 → FeedbackOutput
-  → [draft/v1] → draft ────┤                      │
-                            └──── critic/v1 ───────┘
+baseline FeedbackOutput (passthrough) ─┬──── verifier/v1 ────┐
+                                        │                      ├── reviser/v{N} → FeedbackOutput
+                                        └──── critic/v1 ───────┘
 ```
 
-- **Stage 1 (Draft)**: Same as baseline but uses `pipeline_draft/v1`. Output: `FeedbackOutput`.
-- **Stage 2 (Verifier)** and **Stage 3 (Critic)**: Run in **parallel** (`asyncio.gather`) — both receive the draft as input. Independent of each other.
+The corrected pipeline does **not** make an independent draft LLM call. It takes the Baseline `FeedbackOutput` as its starting point (recorded as a "draft" artifact with `prompt_version_id="baseline_passthrough/v1"`) and applies three stages to improve it:
+
+- **Stage 0 (Draft — passthrough)**: Baseline output stored as artifact; no LLM call.
+- **Stage 1 (Verifier)** and **Stage 2 (Critic)**: Run in **parallel** (`asyncio.gather`) — both receive the baseline output as input. Independent of each other.
   - Verifier: checks linguistic accuracy, missed errors, hallucinations.
   - Critic: checks pedagogical clarity, level-appropriateness, actionability.
-- **Stage 4 (Reviser)**: Receives draft + verifier output + critic output → produces final `FeedbackOutput`.
+- **Stage 3 (Reviser)**: Receives baseline output + verifier report + critic report → produces final `FeedbackOutput`.
 
-All 4 stages write `pipeline_artifacts` rows. Total: 4 artifacts per corrected run.
+All 4 artifact rows are written (passthrough draft + verifier + critic + reviser). Total: 4 artifacts per corrected run.
+
+This design ensures the evaluation directly measures the improvement attributable to the correction pipeline: **Corrected = Baseline + (Verifier + Critic + Reviser)**.
 
 ### 8.5 Orchestrator
 
+Baseline always runs first. Its output is passed as the draft to the corrected pipeline.
+
 ```python
-async def run_both_conditions(ctx, display_condition) -> tuple[FeedbackOutput, Task]:
-    display_coro  = run_baseline(ctx) if display_condition == "baseline" else run_corrected(ctx)
-    alternate_coro = run_corrected(ctx) if display_condition == "baseline" else run_baseline(ctx)
-    alternate_task = asyncio.create_task(alternate_coro)   # background; non-blocking
-    display_result = await display_coro                     # blocks until display done
-    return display_result, alternate_task
+async def run_both_conditions(ctx, display_condition) -> PipelineResult:
+    # Step 1: always await baseline (provides the draft for the corrected pipeline)
+    baseline_result = await run_baseline(ctx)
+
+    if display_condition == "baseline":
+        # Return baseline immediately; fire corrected in background
+        asyncio.create_task(
+            _run_corrected_background(ctx, baseline_result.feedback)
+        )
+        return baseline_result
+    else:
+        # Await corrected (which uses baseline output as draft) and return it
+        return await run_corrected(ctx, baseline_feedback=baseline_result.feedback)
 ```
 
-The route handler returns the HTTP response as soon as `display_result` is available. The background task completes on the event loop after the response is sent.
+The route handler returns the HTTP response as soon as the display condition result is available. When `display_condition="baseline"` (the default), the corrected pipeline runs as a background task after the response is sent.
 
 ### 8.6 Conversation Memory
 
@@ -649,9 +665,10 @@ llm_call_id, created_at
 Streamed via `StreamingResponse` (no full in-memory load).
 
 ### 10.5 Dataset Creation
-- Every turn automatically generates two `feedback_outputs` rows (one per condition).
-- Any `feedback_output` row can be included in an eval batch; pass specific `feedback_output_ids` or `null` for all unscored.
-- Recommended: collect ≥ 50 turns before running evaluation for statistical power.
+- Every turn generates two `feedback_outputs` rows: Baseline (from single LLM call) and Corrected (Baseline refined by verifier + critic + reviser). The Corrected output is always derived from the Baseline of the same turn.
+- Turns where the learner made no errors (`error_list = []`) are excluded from eval batches — there is nothing to improve, so comparison is not meaningful.
+- Any `feedback_output` row with errors can be included in an eval batch; pass specific `feedback_output_ids` or `null` for all unscored.
+- Recommended: collect ≥ 50 turns with errors before running evaluation for statistical power.
 
 ---
 

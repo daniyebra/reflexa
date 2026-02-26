@@ -1,3 +1,3 @@
 api:    uvicorn reflexa.api.main:app
-ui:     streamlit run ui/app.py
-tunnel: ngrok http 8501
+ui:     bash -c "sleep 3 && streamlit run ui/app.py"
+tunnel: bash scripts/start_tunnel.sh

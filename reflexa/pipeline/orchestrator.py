@@ -1,9 +1,14 @@
 """
 Pipeline orchestrator — runs both conditions for every user turn.
 
-The display-condition coroutine is awaited (blocking the HTTP response).
-The alternate condition runs as a fire-and-forget asyncio.Task with its
-own DB session so it can complete after the response is sent.
+Baseline always runs first (awaited). Its output is then passed to the
+corrected pipeline as the draft, so the corrected condition is a direct
+improvement of the baseline rather than an independent generation.
+
+If display_condition is "baseline":
+  - baseline is awaited and returned; corrected fires as a background task.
+If display_condition is "corrected":
+  - baseline is awaited silently; corrected is then awaited and returned.
 """
 from __future__ import annotations
 
@@ -17,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 if TYPE_CHECKING:
     from reflexa.llm.client import LLMClient
     from reflexa.llm.mock import MockLLMClient
+    from reflexa.schemas.feedback import FeedbackOutput
 
 log = logging.getLogger("reflexa.pipeline")
 
@@ -41,13 +47,15 @@ class PipelineResult:
     latency_ms: int
 
 
-async def _run_alternate(ctx: PipelineContext, condition: str) -> None:
+async def _run_corrected_background(
+    ctx: PipelineContext,
+    baseline_feedback: "FeedbackOutput",
+) -> None:
     """
-    Execute the alternate condition with its own DB session.
+    Execute the corrected pipeline in the background with its own DB session.
     Errors are logged but never propagate to the caller.
     """
     from reflexa.db.engine import AsyncSessionLocal
-    from reflexa.pipeline.baseline import run_baseline
     from reflexa.pipeline.corrected import run_corrected
 
     async with AsyncSessionLocal() as db:
@@ -62,13 +70,12 @@ async def _run_alternate(ctx: PipelineContext, condition: str) -> None:
             llm_client=ctx.llm_client,
         )
         try:
-            if condition == "baseline":
-                await run_baseline(alt_ctx)
-            else:
-                await run_corrected(alt_ctx)
+            await run_corrected(alt_ctx, baseline_feedback=baseline_feedback)
             await db.commit()
         except Exception:
-            log.exception("Background pipeline/%s failed for turn %s", condition, ctx.turn_id)
+            log.exception(
+                "Background pipeline/corrected failed for turn %s", ctx.turn_id
+            )
             await db.rollback()
 
 
@@ -79,24 +86,27 @@ async def run_both_conditions(
     """
     Run both pipeline conditions.
 
-    * Awaits the display condition (blocks until done).
-    * Fires the alternate condition as a background asyncio.Task.
+    Baseline always runs first. Its output is passed as the draft to the
+    corrected pipeline (verifier → critic → reviser).
 
-    Returns the PipelineResult for the display condition only.
+    * If display_condition is "baseline": returns the baseline result immediately
+      and fires corrected as a background asyncio.Task.
+    * If display_condition is "corrected": awaits corrected after baseline and
+      returns the corrected result.
     """
     from reflexa.pipeline.baseline import run_baseline
     from reflexa.pipeline.corrected import run_corrected
 
-    alternate_condition = "corrected" if display_condition == "baseline" else "baseline"
+    # Step 1: always run baseline first
+    baseline_result = await run_baseline(ctx)
 
-    # Launch alternate as a background task (non-blocking)
-    asyncio.create_task(
-        _run_alternate(ctx, alternate_condition),
-        name=f"alt-pipeline-{ctx.turn_id}",
-    )
-
-    # Await the display condition
     if display_condition == "baseline":
-        return await run_baseline(ctx)
+        # Step 2a: fire corrected in background using baseline output
+        asyncio.create_task(
+            _run_corrected_background(ctx, baseline_result.feedback),
+            name=f"corrected-pipeline-{ctx.turn_id}",
+        )
+        return baseline_result
     else:
-        return await run_corrected(ctx)
+        # Step 2b: run corrected synchronously and return it
+        return await run_corrected(ctx, baseline_feedback=baseline_result.feedback)

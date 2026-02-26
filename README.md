@@ -150,6 +150,86 @@ Full interactive docs: `http://localhost:8000/docs`
 
 ---
 
+## Deployment (DigitalOcean Droplet)
+
+The app ships as three Docker containers (`api`, `ui`, `nginx`) orchestrated with `docker compose`.
+
+### First-time setup
+
+**1. On the Droplet — clone the repo via SSH:**
+```bash
+git clone git@github.com:daniyebra/Reflexa.git
+cd Reflexa
+```
+
+**2. Create and configure `.env`:**
+```bash
+cp .env.example .env
+nano .env
+```
+
+Required changes for production:
+```
+OPENAI_API_KEY=<your-real-openai-key>
+DATABASE_URL=sqlite+aiosqlite:////app/data/reflexa.db
+API_HOST=0.0.0.0
+BACKEND_URL=http://api:8000
+```
+
+**3. Build and start all containers:**
+```bash
+docker compose up -d --build
+```
+
+**4. Initialize the database (once):**
+```bash
+docker compose exec api python3 scripts/init_db.py
+```
+
+**5. Verify:**
+```bash
+docker compose ps
+docker compose exec api curl http://localhost:8000/health
+```
+
+The UI is served at `http://<droplet-ip>` via nginx on port 80.
+
+---
+
+### Updating after code changes
+
+```bash
+# Locally
+git push origin main
+
+# On the Droplet
+cd ~/Reflexa
+git pull
+docker compose up -d --build
+```
+
+Data is persisted in the `reflexa_data` Docker volume and survives rebuilds.
+
+### Schema changes
+
+If you add or remove DB tables/columns, wipe and re-initialize the volume:
+```bash
+docker volume rm reflexa_reflexa_data
+docker compose up -d
+docker compose exec api python3 scripts/init_db.py
+```
+
+### Useful commands
+
+```bash
+docker compose ps                   # container status
+docker compose logs api             # API logs
+docker compose logs ui              # Streamlit logs
+docker compose down                 # stop all containers
+```
+
+---
+
 ## Architecture
 
 Every user message runs through two conditions:

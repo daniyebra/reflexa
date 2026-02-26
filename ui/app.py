@@ -92,8 +92,8 @@ def render_feedback(fb: dict) -> None:
         st.markdown("✅ No errors found.")
 
     # ── Explanations ─────────────────────────────────────────────────────
-    with st.expander("📖 Explanations", expanded=True):
-        st.write(fb["explanations"])
+    st.markdown("**📖 Explanations**")
+    st.write(fb["explanations"])
 
     # ── Prioritization & focus ───────────────────────────────────────────
     st.info(f"🎯 **Prioritisation & Focus**\n\n{fb['prioritization_and_focus']}")

@@ -16,14 +16,15 @@ logger = logging.getLogger(__name__)
 _SEMAPHORE_LIMIT = 10
 
 
-async def run_evaluation(
-    eval_batch_id: str,
-    llm_client,
-) -> None:
+async def run_evaluation(eval_batch_id: str) -> None:
     """
     Run the full evaluation for a batch.  Called as a background asyncio.Task.
     Uses its own DB session (separate from the request session).
+    Builds one OpenRouter LLMClient per judge model internally.
     """
+    from reflexa.config import settings
+    from reflexa.llm.client import build_judge_client
+
     async with AsyncSessionLocal() as db:
         async with db.begin():
             await crud.update_eval_batch_status(db, eval_batch_id, "running")
@@ -34,11 +35,20 @@ async def run_evaluation(
             items = await crud.get_eval_items(db, eval_batch_id)
             judge_models: list[str] = json.loads(batch.judge_models)
 
+            # Self-judging guard
+            if settings.llm_model in judge_models:
+                raise ValueError(
+                    f"Pipeline model '{settings.llm_model}' is in the judge pool. "
+                    "Remove it from JUDGE_MODELS to prevent self-judging."
+                )
+
+            # Build one client per judge model
+            judge_clients = {m: build_judge_client(settings, m) for m in judge_models}
+
             sem = asyncio.Semaphore(_SEMAPHORE_LIMIT)
 
             async def _score_one(item, judge_model_id: str, dimension: str) -> None:
                 async with sem:
-                    # Load feedback output for this item
                     from reflexa.db.models import FeedbackOutput as FeedbackOutputDB, Turn
                     from sqlalchemy import select
 
@@ -65,7 +75,7 @@ async def run_evaluation(
                         explanations=fo.explanations,
                         prioritization_and_focus=fo.prioritization_and_focus,
                         practice_prompt=fo.practice_prompt,
-                        llm_client=llm_client,
+                        llm_client=judge_clients[judge_model_id],
                         db=db,
                     )
 

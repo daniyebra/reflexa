@@ -13,10 +13,18 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite+aiosqlite:///reflexa.db"
 
-    # LLM
+    # LLM — pipeline
     openai_api_key: str = "mock"
     llm_model: str = "gpt-4o-mini"
     llm_timeout: int = 30
+
+    # LLM — judges (OpenRouter)
+    openrouter_api_key: str = ""
+    judge_models: str = "x-ai/grok-4-fast,google/gemma-3-4b-it:free,anthropic/claude-3.5-haiku"
+
+    @property
+    def judge_models_list(self) -> list[str]:
+        return [m.strip() for m in self.judge_models.split(",") if m.strip()]
 
     # Logging
     log_level: str = "INFO"

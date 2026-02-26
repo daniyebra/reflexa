@@ -25,22 +25,32 @@ async def _count_unscored() -> int:
         return len(items)
 
 
-async def _run(judge_models: list[str], notes: str | None, dry_run: bool) -> None:
+async def _run(judge_models: list[str] | None, notes: str | None, dry_run: bool) -> None:
     from reflexa.db.engine import AsyncSessionLocal, init_db, engine
     from reflexa.db import crud
     from reflexa.config import settings
-    from reflexa.llm.client import build_llm_client
     from reflexa.eval.judge import EVAL_DIMENSIONS
 
     await init_db(engine)
 
+    resolved_judges = judge_models or settings.judge_models_list
+
+    # Self-judging guard
+    if settings.llm_model in resolved_judges:
+        print(
+            f"ERROR: Pipeline model '{settings.llm_model}' is in the judge pool. "
+            "Remove it from JUDGE_MODELS to prevent self-judging.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     n_items = await _count_unscored()
-    n_judges = len(judge_models)
+    n_judges = len(resolved_judges)
     n_dimensions = len(EVAL_DIMENSIONS)
     n_calls = n_items * n_judges * n_dimensions
 
     print(f"Unscored feedback outputs : {n_items}")
-    print(f"Judge models              : {judge_models}")
+    print(f"Judge models              : {resolved_judges}")
     print(f"Dimensions                : {n_dimensions}")
     print(f"Total LLM judge calls     : {n_calls}")
 
@@ -52,8 +62,6 @@ async def _run(judge_models: list[str], notes: str | None, dry_run: bool) -> Non
         print("No unscored outputs found. Exiting.")
         return
 
-    llm_client = build_llm_client(settings)
-
     async with AsyncSessionLocal() as db:
         async with db.begin():
             unscored = await crud.get_unscored_feedback_outputs(db)
@@ -61,10 +69,10 @@ async def _run(judge_models: list[str], notes: str | None, dry_run: bool) -> Non
 
             seed = int(datetime.now(timezone.utc).timestamp())
             batch_id_str = __import__("uuid").uuid4().__str__()
-            batch = await crud.create_eval_batch(
+            await crud.create_eval_batch(
                 db,
                 id=batch_id_str,
-                judge_models=json.dumps(judge_models),
+                judge_models=json.dumps(resolved_judges),
                 notes=notes or f"CLI run, seed={seed}",
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
@@ -81,7 +89,7 @@ async def _run(judge_models: list[str], notes: str | None, dry_run: bool) -> Non
 
     from reflexa.eval.harness import run_evaluation
 
-    await run_evaluation(batch_id_str, llm_client)
+    await run_evaluation(batch_id_str)
     print("Done.")
 
 
@@ -90,9 +98,9 @@ def main() -> None:
     parser.add_argument(
         "--judge-models",
         nargs="+",
-        default=["mock"],
+        default=None,
         metavar="MODEL",
-        help="Judge model IDs (default: mock)",
+        help="Judge model IDs (default: JUDGE_MODELS from .env)",
     )
     parser.add_argument("--notes", default=None, help="Human annotation for this batch")
     parser.add_argument(

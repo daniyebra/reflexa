@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from reflexa.api.deps import get_db, get_llm_client
+from reflexa.api.deps import get_db
 from reflexa.db import crud
 from reflexa.schemas.eval import (
     CreateEvalBatchRequest,
@@ -35,8 +35,9 @@ def _now() -> str:
 async def create_eval_batch(
     req: CreateEvalBatchRequest,
     db: AsyncSession = Depends(get_db),
-    llm_client=Depends(get_llm_client),
 ):
+    from reflexa.config import settings
+
     # Resolve feedback_output_ids
     if req.feedback_output_ids is not None:
         fo_ids = req.feedback_output_ids
@@ -47,14 +48,25 @@ async def create_eval_batch(
     if not fo_ids:
         raise HTTPException(status_code=422, detail="No feedback outputs to evaluate.")
 
+    # Always use the configured judge pool; ignore any client-supplied model list
+    judge_models = settings.judge_models_list
+
+    # Self-judging guard
+    if settings.llm_model in judge_models:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Pipeline model '{settings.llm_model}' is in the judge pool. "
+                   "Remove it from JUDGE_MODELS to prevent self-judging.",
+        )
+
     seed = int(datetime.now(timezone.utc).timestamp())
     batch_id = str(uuid.uuid4())
     notes = req.notes or f"seed={seed}"
 
-    batch = await crud.create_eval_batch(
+    await crud.create_eval_batch(
         db,
         id=batch_id,
-        judge_models=json.dumps(req.judge_model_ids),
+        judge_models=json.dumps(judge_models),
         notes=notes,
         created_at=_now(),
         status="queued",
@@ -71,7 +83,7 @@ async def create_eval_batch(
     # Fire-and-forget background evaluation
     from reflexa.eval.harness import run_evaluation
 
-    asyncio.create_task(run_evaluation(batch_id, llm_client))
+    asyncio.create_task(run_evaluation(batch_id))
 
     return CreateEvalBatchResponse(
         eval_batch_id=batch_id,

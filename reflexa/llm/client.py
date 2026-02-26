@@ -27,6 +27,9 @@ class LLMCallError(Exception):
     """Raised when an LLM call fails (after instructor's internal retries)."""
 
 
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
 class LLMClient:
     def __init__(
         self,
@@ -34,9 +37,10 @@ class LLMClient:
         model: str,
         timeout: int = 30,
         max_retries: int = 3,
+        base_url: str | None = None,
     ) -> None:
         # max_retries=0 on the OpenAI client — instructor handles validation retries
-        raw = AsyncOpenAI(api_key=api_key, max_retries=0)
+        raw = AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=0)
         self._client = instructor.from_openai(raw)
         self.model_id = model
         self.timeout = timeout
@@ -108,4 +112,18 @@ def build_llm_client(settings) -> LLMClient | object:
         api_key=settings.openai_api_key,
         model=settings.llm_model,
         timeout=settings.llm_timeout,
+    )
+
+
+def build_judge_client(settings, model_id: str) -> LLMClient | object:
+    """Factory for per-judge OpenRouter clients used by the eval harness."""
+    from reflexa.llm.mock import MockLLMClient
+
+    if settings.is_mock or not settings.openrouter_api_key:
+        return MockLLMClient()
+    return LLMClient(
+        api_key=settings.openrouter_api_key,
+        model=model_id,
+        timeout=settings.llm_timeout,
+        base_url=OPENROUTER_BASE_URL,
     )

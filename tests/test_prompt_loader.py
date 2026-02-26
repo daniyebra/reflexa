@@ -20,13 +20,13 @@ EXPECTED_NAMES = {
 
 # Maps name → expected latest version suffix (e.g. "v2" for baseline)
 _EXPECTED_LATEST: dict[str, str] = {
-    "baseline":           "v3",
+    "baseline":           "v4",
     "pipeline_draft":     "v1",
     "pipeline_verifier":  "v2",
     "pipeline_critic":    "v2",
-    "pipeline_reviser":   "v4",
+    "pipeline_reviser":   "v5",
     "eval_judge":         "v1",
-    "session_opener":     "v1",
+    "session_opener":     "v2",
 }
 
 
@@ -35,7 +35,7 @@ _EXPECTED_LATEST: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 def test_latest_baseline_version_id():
-    assert _loader.latest("baseline").version_id == "baseline/v3"
+    assert _loader.latest("baseline").version_id == "baseline/v4"
 
 
 def test_latest_all_names():
@@ -158,7 +158,7 @@ def test_to_messages_returns_two_items():
 
 def test_get_prompt_returns_latest_by_default():
     tmpl = get_prompt("baseline")
-    assert tmpl.version_id == "baseline/v3"
+    assert tmpl.version_id == "baseline/v4"
 
 
 def test_get_prompt_returns_prompt_template_instance():

@@ -115,6 +115,19 @@ def build_llm_client(settings) -> LLMClient | object:
     )
 
 
+def build_review_client(settings) -> LLMClient | object:
+    """Factory for the review client used by verifier/critic in the corrected pipeline."""
+    from reflexa.llm.mock import MockLLMClient
+
+    if settings.is_mock:
+        return MockLLMClient()
+    return LLMClient(
+        api_key=settings.openai_api_key,
+        model=settings.review_model,
+        timeout=settings.llm_timeout,
+    )
+
+
 def build_judge_client(settings, model_id: str) -> LLMClient | object:
     """Factory for per-judge OpenRouter clients used by the eval harness."""
     from reflexa.llm.mock import MockLLMClient

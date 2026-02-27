@@ -94,8 +94,12 @@ async def run_corrected(
             draft_feedback=draft_text,
         )
 
+        # Use review_client for verifier/critic if available (different model
+        # avoids self-review bias); fall back to llm_client for backwards compat.
+        review_client = ctx.review_client or ctx.llm_client
+
         verifier, critic = await asyncio.gather(
-            ctx.llm_client.complete(
+            review_client.complete(
                 messages=verifier_msgs,
                 response_model=VerifierOutput,
                 prompt_version_id=verifier_tmpl.version_id,
@@ -104,7 +108,7 @@ async def run_corrected(
                 temperature=verifier_tmpl.model_constraints.get("temperature", 0.2),
                 max_tokens=verifier_tmpl.model_constraints.get("max_tokens", 768),
             ),
-            ctx.llm_client.complete(
+            review_client.complete(
                 messages=critic_msgs,
                 response_model=CriticOutput,
                 prompt_version_id=critic_tmpl.version_id,

@@ -37,6 +37,7 @@ class PipelineContext:
     conversation_history: list[dict]   # pre-rendered, oldest-first
     db: AsyncSession
     llm_client: "LLMClient | MockLLMClient"
+    review_client: "LLMClient | MockLLMClient | None" = None
 
 
 @dataclass
@@ -68,6 +69,7 @@ async def _run_corrected_background(
             conversation_history=ctx.conversation_history,
             db=db,
             llm_client=ctx.llm_client,
+            review_client=ctx.review_client,
         )
         try:
             await run_corrected(alt_ctx, baseline_feedback=baseline_feedback)

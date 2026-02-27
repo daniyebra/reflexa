@@ -22,10 +22,10 @@ EXPECTED_NAMES = {
 _EXPECTED_LATEST: dict[str, str] = {
     "baseline":           "v4",
     "pipeline_draft":     "v1",
-    "pipeline_verifier":  "v2",
-    "pipeline_critic":    "v2",
-    "pipeline_reviser":   "v5",
-    "eval_judge":         "v1",
+    "pipeline_verifier":  "v3",
+    "pipeline_critic":    "v3",
+    "pipeline_reviser":   "v6",
+    "eval_judge":         "v2",
     "session_opener":     "v2",
 }
 

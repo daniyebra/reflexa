@@ -37,6 +37,11 @@ EVAL_DIMENSIONS: dict[str, str] = {
         "Are the most important errors correctly prioritized? "
         "Is the focus on issues that matter most for communication at this level?"
     ),
+    "conversational_quality": (
+        "Does the conversational reply engage naturally with the student's message? "
+        "Is it at the right proficiency level, encouraging, and does it end with an "
+        "open-ended question that drives further conversation?"
+    ),
 }
 
 
@@ -52,6 +57,7 @@ async def score_item(
     explanations: str,
     prioritization_and_focus: str,
     practice_prompt: str,
+    conversation_reply: str = "",
     llm_client,
     db: AsyncSession,
 ) -> None:
@@ -73,20 +79,24 @@ async def score_item(
         explanations=explanations,
         prioritization_and_focus=prioritization_and_focus,
         practice_prompt=practice_prompt,
+        conversation_reply=conversation_reply,
     )
 
     now = datetime.now(timezone.utc).isoformat()
     score_id = str(uuid.uuid4())
 
+    # Use a unique caller_context per call to avoid race conditions in gather
+    unique_context = f"eval/judge/{dimension}/{score_id}"
+
     judge_output: JudgeOutput = await llm_client.complete(
         messages=messages,
         response_model=JudgeOutput,
         prompt_version_id=prompt.version_id,
-        caller_context=f"eval/judge/{dimension}",
+        caller_context=unique_context,
         db=db,
     )
 
-    # Retrieve the llm_call we just inserted (last one for this context in this session).
+    # Retrieve the llm_call we just inserted using the unique context.
     # No explicit flush: autoflush=True triggers before the select, matching the pattern
     # used in create_llm_call to avoid "Session is already flushing" races in gather.
     from reflexa.db.models import LLMCall
@@ -94,7 +104,7 @@ async def score_item(
 
     llm_call_result = await db.execute(
         select(LLMCall)
-        .where(LLMCall.caller_context == f"eval/judge/{dimension}")
+        .where(LLMCall.caller_context == unique_context)
         .order_by(desc(LLMCall.created_at))
         .limit(1)
     )

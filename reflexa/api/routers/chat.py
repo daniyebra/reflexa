@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from reflexa.api.deps import get_db, get_llm_client
+from reflexa.api.deps import get_db, get_llm_client, get_review_client
 from reflexa.config import settings
 from reflexa.db import crud
 from reflexa.llm.client import LLMCallError
@@ -37,6 +37,7 @@ async def create_turn(
     req: CreateTurnRequest,
     db: AsyncSession = Depends(get_db),
     llm_client=Depends(get_llm_client),
+    review_client=Depends(get_review_client),
 ):
     if len(req.user_message) > settings.max_message_length:
         raise HTTPException(
@@ -73,6 +74,7 @@ async def create_turn(
         conversation_history=history,
         db=db,
         llm_client=llm_client,
+        review_client=review_client,
     )
 
     try:

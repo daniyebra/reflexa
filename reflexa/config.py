@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     # LLM — pipeline
     openai_api_key: str = "mock"
     llm_model: str = "gpt-4o-mini"
+    review_model: str = "gpt-4o-mini"
     llm_timeout: int = 30
 
     # LLM — judges (OpenRouter)

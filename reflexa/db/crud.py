@@ -236,13 +236,28 @@ async def get_feedback_output(db: AsyncSession, turn_id: str, condition: str):
 
 
 async def get_unscored_feedback_outputs(db: AsyncSession) -> list:
+    """
+    Return feedback outputs that are (a) not yet scored and (b) belong to turns
+    where ALL feedback outputs have non-empty error_list.  This ensures paired
+    evaluation — if baseline produced '[]' but corrected didn't, the entire turn
+    is excluded so we only compare turns with substantive feedback on both sides.
+    """
     from reflexa.db.models import FeedbackOutput as FeedbackOutputDB, EvalItem
 
     scored_ids = select(EvalItem.feedback_output_id)
+
+    # Subquery: turn_ids where ANY feedback_output has empty error_list
+    turns_with_empty = (
+        select(FeedbackOutputDB.turn_id)
+        .where(FeedbackOutputDB.error_list == "[]")
+        .distinct()
+    )
+
     result = await db.execute(
         select(FeedbackOutputDB).where(
             FeedbackOutputDB.id.not_in(scored_ids),
             FeedbackOutputDB.error_list != "[]",
+            FeedbackOutputDB.turn_id.not_in(turns_with_empty),
         )
     )
     return result.scalars().all()

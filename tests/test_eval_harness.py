@@ -240,6 +240,7 @@ async def test_judge_prompt_does_not_contain_condition(db_session):
             explanations="No errors.",
             prioritization_and_focus="Good.",
             practice_prompt="Practice more.",
+            conversation_reply="Great job!",
         )
         full_text = " ".join(m["content"] for m in messages)
         # "baseline" would never appear legitimately in a judge prompt

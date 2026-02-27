@@ -75,6 +75,7 @@ async def run_evaluation(eval_batch_id: str) -> None:
                         explanations=fo.explanations,
                         prioritization_and_focus=fo.prioritization_and_focus,
                         practice_prompt=fo.practice_prompt,
+                        conversation_reply=fo.conversation_reply or "",
                         llm_client=judge_clients[judge_model_id],
                         db=db,
                     )

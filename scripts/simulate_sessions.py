@@ -127,8 +127,7 @@ wrong word choices
 3. Keep your message between 1-4 sentences (appropriate to {proficiency_level}).
 4. Respond naturally to what the teacher said — answer their questions, react to their comments.
 5. Stay in character. Talk about your interests and life naturally.
-6. NEVER write perfectly — you are a LEARNER, not a native speaker. Every message should have \
-at least one error that a teacher could correct.
+6. NEVER write perfectly — you are a LEARNER, not a native speaker.
 7. Do NOT add any prefix, label, or explanation. Just write the message as the student would type it."""
 
 LEARNER_USER_PROMPT_FIRST = """\
@@ -136,7 +135,7 @@ The teacher just opened the conversation with this greeting:
 "{opener_message}"
 
 Write your first response as {name}. Remember you are {proficiency_level} level — \
-make appropriate mistakes. Introduce yourself or respond to the greeting naturally."""
+make appropriate mistakes occassionally, with varying frequency according to your proficiency level. Introduce yourself or respond to the greeting naturally."""
 
 LEARNER_USER_PROMPT_TURN = """\
 The teacher responded to your last message with:
@@ -214,17 +213,17 @@ async def send_turn(
     api_url: str,
     session_id: str,
     user_message: str,
-    max_retries: int = 3,
+    max_retries: int = 5,
 ) -> dict:
-    """POST /sessions/{id}/turns with retry on 503."""
+    """POST /sessions/{id}/turns with retry on 500/503 (SQLite locking)."""
     for attempt in range(max_retries):
         resp = await http.post(
             f"{api_url}/sessions/{session_id}/turns",
             json={"user_message": user_message},
         )
-        if resp.status_code == 503 and attempt < max_retries - 1:
-            wait = 2 ** (attempt + 1)
-            print(f"    [503] Retrying in {wait}s (attempt {attempt + 1}/{max_retries})")
+        if resp.status_code in (500, 503) and attempt < max_retries - 1:
+            wait = 3 * (attempt + 1)
+            print(f"    [{resp.status_code}] Retrying in {wait}s (attempt {attempt + 1}/{max_retries})")
             await asyncio.sleep(wait)
             continue
         resp.raise_for_status()

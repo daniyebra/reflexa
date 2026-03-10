@@ -87,7 +87,15 @@ async def run_evaluation(eval_batch_id: str) -> None:
                 for dimension in EVAL_DIMENSIONS
             ]
 
-            await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            failures = [r for r in results if isinstance(r, Exception)]
+            if failures:
+                logger.warning(
+                    "eval_batch %s: %d/%d scoring tasks failed (continuing with successes)",
+                    eval_batch_id, len(failures), len(results),
+                )
+                for f in failures[:5]:
+                    logger.warning("  sample failure: %s", f)
             await db.commit()
 
             async with AsyncSessionLocal() as db2:
@@ -95,9 +103,9 @@ async def run_evaluation(eval_batch_id: str) -> None:
                     await crud.update_eval_batch_status(db2, eval_batch_id, "completed")
 
             logger.info(
-                "eval_batch %s completed: %d items × %d models × %d dimensions = %d scores",
+                "eval_batch %s completed: %d items × %d models × %d dimensions = %d tasks (%d failed)",
                 eval_batch_id, len(items), len(judge_models), len(EVAL_DIMENSIONS),
-                len(items) * len(judge_models) * len(EVAL_DIMENSIONS),
+                len(results), len(failures),
             )
 
         except Exception as exc:

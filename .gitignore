@@ -47,3 +47,24 @@ uv.lock
 # Logs
 *.log
 logs/
+
+# Analysis outputs and exports (not committed)
+analysis_and_results/
+export/
+results*.csv
+results*.jsonl
+feedback_comparison.csv
+feedback_comparison.pdf
+evaluation_methodology.pdf
+reflexa_experiment_report.pdf
+
+# Local research / survey files
+.Rhistory
+
+# Local tool state
+.claude/
+
+# Keys / secrets
+.sshkey
+.sshkey.pub
+.pem

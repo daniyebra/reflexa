@@ -1,6 +1,67 @@
 # Reflexa
 
-A research platform that runs two LLM feedback pipelines in parallel for every language-learner message, stores all outputs, and evaluates them offline with an LLM judge.
+Reflexa is a research platform for AI-assisted language-learning feedback. For each learner message, it runs a visible `baseline` feedback pipeline and a hidden `corrected` review pipeline, stores both outputs plus intermediate artifacts, and evaluates them offline with blinded LLM judges.
+
+The current system also includes:
+
+- session openers generated at chat start
+- conversational replies returned with every feedback package
+- a Streamlit frontend for interactive testing
+- an offline evaluation/export toolchain
+- research-only analysis and PDF/report generation scripts
+
+## Current Status
+
+The end-to-end platform is implemented and usable for:
+
+- collecting learner turns in multiple languages
+- running the baseline-first dual-condition pipeline
+- storing runs, artifacts, and feedback outputs in SQLite
+- running offline blinded evaluation across a configurable judge pool
+- exporting results to CSV/JSONL
+- generating research analyses and private reports from exported data
+
+The codebase also contains post-evaluation survey/report tooling used during the final project phase. Those scripts are documented, but their generated outputs are intentionally kept out of git.
+
+## Core Design
+
+Every user turn runs both conditions in sequence:
+
+1. `baseline`: a single LLM call that generates the user-visible feedback package
+2. `corrected`: the baseline output is reviewed by `verifier` and `critic`, then revised by `reviser`
+
+Important behavior:
+
+- baseline always runs first
+- corrected never drafts independently; it only refines the baseline output
+- if `DISPLAY_CONDITION=baseline`, corrected runs in the background
+- if `DISPLAY_CONDITION=corrected`, baseline still runs first but corrected is awaited and returned
+
+This makes the comparison interpretable: the corrected condition is measured as a direct revision of baseline rather than a separate generation strategy.
+
+## What The User Sees
+
+In the UI, each session starts with an LLM-generated opener in the target language. Each turn then returns:
+
+- a conversational reply
+- a corrected utterance
+- a structured error list
+- explanations
+- prioritization and focus guidance
+- a practice prompt
+
+Only one condition is shown to the learner. The other condition is stored silently for offline analysis.
+
+## Supported Languages
+
+The current Streamlit UI exposes:
+
+- Spanish
+- French
+- Portuguese
+- Italian
+- German
+- Japanese
 
 ## Quick Start
 
@@ -10,21 +71,23 @@ A research platform that runs two LLM feedback pipelines in parallel for every l
 pip install -e ".[dev]"
 ```
 
-### 2. Configure environment
+This installs the app plus development and research-script dependencies.
+
+### 2. Configure the environment
 
 ```bash
 cp .env.example .env
 ```
 
-The default `.env` sets `OPENAI_API_KEY=mock`, which activates the built-in mock LLM — no API key required for local development.
+Local development defaults to:
 
-To use a real OpenAI key, set:
-
-```
-OPENAI_API_KEY=sk-...
+```bash
+OPENAI_API_KEY=mock
 ```
 
-### 3. Initialise the database
+This activates the built-in mock LLM client and avoids real API calls.
+
+### 3. Initialize the database
 
 ```bash
 python3 scripts/init_db.py
@@ -32,225 +95,190 @@ python3 scripts/init_db.py
 make db
 ```
 
-### 4. Start the API server
+### 4. Start the API
 
 ```bash
 make dev
-# or
-OPENAI_API_KEY=mock uvicorn reflexa.api.main:app --reload
 ```
 
-API is available at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
+The API will be available at `http://localhost:8000` and Swagger docs at `http://localhost:8000/docs`.
 
-### 5. Start the Streamlit UI (optional)
+### 5. Start the Streamlit UI
 
 In a second terminal:
 
 ```bash
 make ui
-# or
-streamlit run ui/app.py
 ```
 
----
+## Tests
 
-## Running Tests
+Run the full test suite with:
 
 ```bash
-make test          # all tests, verbose
-make cov           # with line coverage report
+make test
 ```
 
-All 135 tests pass with `OPENAI_API_KEY=mock` (no real API calls).
+Coverage:
 
----
+```bash
+make cov
+```
+
+The repository should be treated as the source of truth for the current test count. Avoid hardcoding a specific passing-test total in downstream documentation because it changes as the project evolves.
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENAI_API_KEY` | `mock` | Set to `mock` for local dev; real key for live LLM |
-| `DATABASE_URL` | `sqlite+aiosqlite:///reflexa.db` | SQLite database path |
-| `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`/`INFO`/`WARNING`/`ERROR`) |
-| `DISPLAY_CONDITION` | `baseline` | Which pipeline is shown to the user (`baseline`/`corrected`) |
-| `LLM_MODEL` | `gpt-4o-mini` | OpenAI model for pipeline calls |
-| `LLM_TIMEOUT` | `30` | LLM call timeout in seconds |
-| `MEMORY_TURNS` | `10` | Number of prior turns included in conversation history |
-| `MAX_MESSAGE_LENGTH` | `2000` | Maximum characters in a user message |
-| `EVAL_JUDGE_MODEL` | `gpt-4o-mini` | Model used for offline evaluation scoring |
-| `API_HOST` | `127.0.0.1` | FastAPI bind address |
+### Core runtime
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OPENAI_API_KEY` | `mock` | Main pipeline LLM provider key; `mock` activates the deterministic mock client |
+| `DATABASE_URL` | `sqlite+aiosqlite:///reflexa.db` | SQLite database location |
+| `LOG_LEVEL` | `INFO` | Backend logging verbosity |
+| `MEMORY_TURNS` | `10` | Number of visible prior turns included in prompt memory |
+| `MAX_MESSAGE_LENGTH` | `2000` | Maximum accepted input length for a learner message |
+| `DISPLAY_CONDITION` | `baseline` | Which condition is returned to the UI |
+| `LLM_TIMEOUT` | `30` | Timeout for a single LLM call in seconds |
+
+### Model configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `LLM_MODEL` | `gpt-4o-mini` | Main generation model for baseline and reviser |
+| `REVIEW_MODEL` | `gpt-4o-mini` | Review model for verifier and critic |
+| `OPENROUTER_API_KEY` | empty | Key used for evaluation judge calls |
+| `JUDGE_MODELS` | `x-ai/grok-4-fast,anthropic/claude-3.5-haiku,google/gemini-2.0-flash-001` | Comma-separated judge model pool |
+
+### API and UI
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `API_HOST` | `127.0.0.1` | FastAPI bind host |
 | `API_PORT` | `8000` | FastAPI port |
-| `BACKEND_URL` | `http://localhost:8000` | URL the Streamlit UI uses to reach the API |
+| `BACKEND_URL` | `http://localhost:8000` | Backend URL used by Streamlit |
 
-Prompt version overrides (defaults to latest version if unset):
+### Prompt version overrides
 
-```
-BASELINE_PROMPT_VERSION=baseline/v1
-PIPELINE_DRAFT_PROMPT_VERSION=pipeline_draft/v1
-PIPELINE_VERIFIER_PROMPT_VERSION=pipeline_verifier/v1
-PIPELINE_CRITIC_PROMPT_VERSION=pipeline_critic/v1
-PIPELINE_REVISER_PROMPT_VERSION=pipeline_reviser/v1
-EVAL_JUDGE_PROMPT_VERSION=eval_judge/v1
-```
+If unset, Reflexa uses the latest prompt file under each prompt directory.
 
----
+| Variable | Latest currently checked in |
+|---|---|
+| `BASELINE_PROMPT_VERSION` | `baseline/v4` |
+| `PIPELINE_DRAFT_PROMPT_VERSION` | `pipeline_draft/v1` |
+| `PIPELINE_VERIFIER_PROMPT_VERSION` | `pipeline_verifier/v4` |
+| `PIPELINE_CRITIC_PROMPT_VERSION` | `pipeline_critic/v4` |
+| `PIPELINE_REVISER_PROMPT_VERSION` | `pipeline_reviser/v6` |
+| `EVAL_JUDGE_PROMPT_VERSION` | `eval_judge/v2` |
+| `SESSION_OPENER_PROMPT_VERSION` | `session_opener/v2` |
 
-## Running Offline Evaluation
-
-### 1. Collect turns
-
-Start a session and submit at least a few messages via the UI or API. Each turn automatically generates two `feedback_output` rows (one per condition).
-
-### 2. Run the evaluator
-
-```bash
-make eval
-# or with options:
-python3 scripts/run_eval.py --judge-models gpt-4o-mini gpt-4o --notes "Run 1"
-python3 scripts/run_eval.py --dry-run   # estimate cost without making calls
-```
-
-### 3. Export results
-
-```bash
-make export                                          # list available batches
-python3 scripts/export_results.py --list-batches
-python3 scripts/export_results.py --batch-id <id> --format csv   > results.csv
-python3 scripts/export_results.py --batch-id <id> --format jsonl > results.jsonl
-```
-
-### 4. Check summary via API
-
-```
-GET http://localhost:8000/eval/summary
-```
-
-Returns mean ± std per condition × dimension.
-
----
-
-## API Reference
+## API Summary
 
 | Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | DB + LLM connectivity check |
-| `POST` | `/sessions` | Create a new session |
+|---|---|---|
+| `GET` | `/health` | Health check for DB and LLM mode |
+| `POST` | `/sessions` | Create a new session and return `opener_message` |
 | `GET` | `/sessions/{id}` | Session metadata and turn count |
-| `GET` | `/sessions/{id}/history` | Last N turns |
-| `POST` | `/sessions/{id}/turns` | Submit a message; returns feedback |
-| `GET` | `/turns/{id}/artifacts` | All pipeline artifacts for a turn |
-| `GET` | `/turns/{id}/feedback/{condition}` | Feedback for a specific condition |
-| `POST` | `/eval/batches` | Create and queue an evaluation batch |
-| `GET` | `/eval/batches/{id}` | Batch status and progress |
-| `GET` | `/eval/batches/{id}/results` | All scores (blinded) |
-| `GET` | `/eval/batches/{id}/export?format=csv\|jsonl` | Download results |
-| `GET` | `/eval/summary` | Aggregate stats per condition × dimension |
+| `GET` | `/sessions/{id}/history` | Recent turn history |
+| `POST` | `/sessions/{id}/turns` | Submit a learner message and get the visible feedback package |
+| `GET` | `/turns/{id}/artifacts` | Inspect saved pipeline artifacts for a turn |
+| `GET` | `/turns/{id}/feedback/{condition}` | Retrieve stored feedback for one condition |
+| `POST` | `/eval/batches` | Queue evaluation for unscored or selected outputs |
+| `GET` | `/eval/batches/{id}` | Batch metadata and status |
+| `GET` | `/eval/batches/{id}/results` | Blinded score records |
+| `GET` | `/eval/batches/{id}/export?format=csv|jsonl` | Stream results for one batch |
+| `GET` | `/eval/summary` | Aggregate condition-by-dimension summary |
 
-Full interactive docs: `http://localhost:8000/docs`
+## Evaluation Model
 
----
+The offline judge scores each feedback output on six dimensions:
 
-## Deployment (DigitalOcean Droplet)
+1. `linguistic_correctness`
+2. `explanation_quality`
+3. `actionability`
+4. `level_appropriateness`
+5. `prioritization_and_focus`
+6. `conversational_quality`
 
-The app ships as three Docker containers (`api`, `ui`, `nginx`) orchestrated with `docker compose`.
+Judges are blinded to condition. The condition label is never included in the judge prompt.
 
-### First-time setup
+## Research Workflow
 
-**1. On the Droplet — clone the repo via SSH:**
+The most common workflow is:
+
+1. collect or simulate turns
+2. run evaluation
+3. export a batch
+4. analyze the exported files
+5. generate private reports
+
+Typical commands:
+
 ```bash
-git clone git@github.com:daniyebra/Reflexa.git
-cd Reflexa
+# Generate or collect turns
+python3 scripts/simulate_sessions.py
+
+# Run evaluation
+python3 scripts/run_eval.py --notes "Final run"
+
+# Inspect/export batches
+python3 scripts/export_results.py --list-batches
+python3 scripts/export_results.py --batch-id <id> --format csv   > analysis_and_results/results.csv
+python3 scripts/export_results.py --batch-id <id> --format jsonl > analysis_and_results/results.jsonl
+
+# Analyze exported results
+python3 scripts/analyze_results.py analysis_and_results/results.jsonl
+python3 scripts/show_stats.py analysis_and_results/results.jsonl
 ```
 
-**2. Create and configure `.env`:**
-```bash
-cp .env.example .env
-nano .env
-```
+See `docs/research_workflow.md` for a fuller description of core scripts, research-only scripts, and where outputs should live.
 
-Required changes for production:
-```
-OPENAI_API_KEY=<your-real-openai-key>
-DATABASE_URL=sqlite+aiosqlite:////app/data/reflexa.db
-API_HOST=0.0.0.0
-BACKEND_URL=http://api:8000
-```
+## Research Scripts
 
-**3. Build and start all containers:**
+The repository contains two broad categories of scripts:
+
+- reusable operational scripts such as `init_db.py`, `run_eval.py`, `export_results.py`, `export_all.py`, `simulate_sessions.py`, and `analyze_results.py`
+- research-only analysis/report generators such as `generate_report.py`, `generate_methodology_pdf.py`, `generate_comparison_pdf.py`, `generate_spanish_pdf.py`, `generate_comparison.py`, and `show_stats.py`
+
+The report generators are useful for reproducing the final project materials, but they are not required to run the app itself.
+
+## Deployment
+
+The repository includes Docker and nginx configuration for a simple three-service deployment:
+
+- `api`
+- `ui`
+- `nginx`
+
+Bring it up with:
+
 ```bash
 docker compose up -d --build
 ```
 
-**4. Initialize the database (once):**
+Then initialize the database once:
+
 ```bash
 docker compose exec api python3 scripts/init_db.py
 ```
 
-**5. Verify:**
-```bash
-docker compose ps
-docker compose exec api curl http://localhost:8000/health
-```
+The UI is served through nginx on port `80`.
 
-The UI is served at `http://<droplet-ip>` via nginx on port 80.
+## Repository Hygiene
 
----
+The following should be treated as private or generated and should not be committed:
 
-### Updating after code changes
+- `analysis_and_results/`
+- exported `results*.csv` / `results*.jsonl`
+- `export/`
+- survey exports containing IP/location metadata
+- local tool state such as `.claude/`, `.Rhistory`
+- any keys such as `.sshkey` or `.sshkey.pub`
 
-```bash
-# Locally
-git push origin main
+If you generate experiment reports locally, write them into `analysis_and_results/` rather than the repo root.
 
-# On the Droplet
-cd ~/Reflexa
-git pull
-docker compose up -d --build
-```
+## Additional Documentation
 
-Data is persisted in the `reflexa_data` Docker volume and survives rebuilds.
-
-### Schema changes
-
-If you add or remove DB tables/columns, wipe and re-initialize the volume:
-```bash
-docker volume rm reflexa_reflexa_data
-docker compose up -d
-docker compose exec api python3 scripts/init_db.py
-```
-
-### Useful commands
-
-```bash
-docker compose ps                   # container status
-docker compose logs api             # API logs
-docker compose logs ui              # Streamlit logs
-docker compose down                 # stop all containers
-```
-
----
-
-## Architecture
-
-Every user message runs through two conditions:
-
-1. **Baseline** — single LLM call → `FeedbackOutput` (returned to user immediately)
-2. **Corrected** — Baseline output passed as draft → Verifier ‖ Critic → Reviser → `FeedbackOutput` (runs in background)
-
-The Corrected pipeline does not generate an independent draft. It takes the Baseline output and applies a three-stage correction process to it — Verifier and Critic run in parallel, then Reviser integrates their reports to produce the final output. This means the evaluation directly measures whether the correction pipeline improves the Baseline feedback.
-
-One condition is shown to the user; the other stores silently. Both outputs are stored for offline comparison. The active display condition is set by `DISPLAY_CONDITION` in `.env` (default: `baseline`).
-
-See `prd.md` for the full product requirements document.
-
----
-
-## Prompt Versioning
-
-Prompt YAML files live at `reflexa/prompts/{name}/v{N}.yaml` and are **immutable once committed**. To change a prompt, create `v{N+1}.yaml`. The `prompt_version_id` is stored on every `llm_calls` row for full reproducibility.
-
----
-
-## Recommended Dataset Size
-
-For statistically meaningful evaluation results, collect ≥ 50 turns per condition before running the evaluator. The `GET /eval/summary` endpoint displays N alongside means so you can assess sample size.
+- `CLAUDE.md` — implementation-oriented project guidance
+- `prd.md` — final implementation specification and project status summary
+- `docs/research_workflow.md` — evaluation, export, analysis, reporting, and privacy workflow

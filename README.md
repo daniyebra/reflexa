@@ -279,6 +279,4 @@ If you generate experiment reports locally, write them into `analysis_and_result
 
 ## Additional Documentation
 
-- `CLAUDE.md` — implementation-oriented project guidance
-- `prd.md` — final implementation specification and project status summary
 - `docs/research_workflow.md` — evaluation, export, analysis, reporting, and privacy workflow

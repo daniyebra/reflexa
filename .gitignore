@@ -63,21 +63,6 @@ reflexa_experiment_report.pdf
 
 # Local tool state
 .claude/
-.cursor/
-.cursorignore
-.cursorrules
-.windsurf/
-.roo/
-
-# AI coding / planning artifacts
-CLAUDE.md
-AGENTS.md
-GEMINI.md
-COPILOT_INSTRUCTIONS.md
-prd.md
-spec.md
-*.docx
-~$*.docx
 
 # Keys / secrets
 .sshkey
